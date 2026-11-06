@@ -1,0 +1,61 @@
+// Seal build helper (init script, passed with -I): print per-class and per-project
+// test result lines plus a final summary, so the CI log states how many tests ran,
+// passed, failed and were skipped. build.gradle captures test stdout at INFO level,
+// so everything here goes through logger.lifecycle rather than println.
+// Each skipped test is printed with its reason, read from the @Disabled* annotation
+// on the test method (or class) in the test source, right above the summary line.
+def sealSkipReason = { Project p, String className, String testName ->
+	String method = testName.replaceAll(/\(.*$/, '')
+	String rel = className.replace('.', '/')
+	File src = ['src/test/java', 'src/test/kotlin'].collectMany { dir ->
+		['.java', '.kt'].collect { ext -> p.file("${dir}/${rel}${ext}") }
+	}.find { it.isFile() }
+	if (src == null) {
+		return 'test source not found'
+	}
+	List<String> lines = src.readLines()
+	int idx = lines.findIndexOf { it =~ /\b(void|fun)\s+${java.util.regex.Pattern.quote(method)}\s*\(/ }
+	if (idx >= 0) {
+		for (int i = idx - 1; i >= 0 && i >= idx - 8; i--) {
+			def m = lines[i] =~ /@(Disabled\w*)(\((.*)\))?/
+			if (m.find()) {
+				return "@${m.group(1)}${m.group(2) ?: ''} on the test method (${src.name}:${i + 1})"
+			}
+		}
+	}
+	int cls = lines.findIndexOf { it =~ /@Disabled\w*/ }
+	if (cls >= 0 && lines.findIndexOf { it =~ /\bclass\s+/ } > cls) {
+		return "${lines[cls].trim()} on the test class (${src.name}:${cls + 1})"
+	}
+	return 'skipped by JUnit (no @Disabled annotation found near the method)'
+}
+
+allprojects { Project proj ->
+	tasks.withType(Test) { Test t ->
+		List<String> skips = []
+		t.afterTest { desc, result ->
+			if (result.resultType == TestResult.ResultType.SKIPPED) {
+				String line = "SEAL SKIPPED: ${desc.className} > ${desc.name} -- reason: " +
+						sealSkipReason(proj, desc.className, desc.name)
+				skips << line
+				t.logger.lifecycle(line)
+			}
+			else if (result.resultType == TestResult.ResultType.FAILURE) {
+				t.logger.lifecycle("SEAL FAILED: ${desc.className} > ${desc.name}")
+			}
+		}
+		t.afterSuite { desc, result ->
+			if (desc.className != null && desc.name == desc.className) {
+				t.logger.lifecycle("SEAL CLASS ${desc.className}: ${result.resultType} " +
+						"(tests=${result.testCount}, passed=${result.successfulTestCount}, " +
+						"failed=${result.failedTestCount}, skipped=${result.skippedTestCount})")
+			}
+			if (desc.parent == null) {
+				skips.each { t.logger.lifecycle(it) }
+				t.logger.lifecycle("SEAL TEST SUMMARY ${t.project.path}: ${result.resultType} " +
+						"tests=${result.testCount} passed=${result.successfulTestCount} " +
+						"failed=${result.failedTestCount} skipped=${result.skippedTestCount}")
+			}
+		}
+	}
+}

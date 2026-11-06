@@ -1,18 +1,8 @@
 pluginManagement {
 	repositories {
 		gradlePluginPortal()
-		maven { url 'https://repo.spring.io/plugins-release' }
-	}
-}
-
-plugins {
-	id 'com.gradle.enterprise' version '3.1.1'
-	id "io.spring.gradle-enterprise-conventions" version "0.0.2"
-}
-
-gradleEnterprise {
-	buildScan {
-		publishOnFailure()
+		mavenCentral()
+		maven { url 'https://repo.gradle.org/gradle/libs-releases' }
 	}
 }
 
